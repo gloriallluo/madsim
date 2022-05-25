@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     future::Future,
     io,
     net::{SocketAddr, ToSocketAddrs},
@@ -64,7 +65,10 @@ impl Runtime {
         };
         let local_handle = LocalHandle {
             handle: rt.handle().clone(),
-            net: handle.net.create_host(&rt, &local, "127.0.0.1:0").unwrap(),
+            net: {
+                let addr = env::var("MADFS_NET_ADDR").unwrap_or("127.0.0.1:0".into());
+                handle.net.create_host(&rt, &local, addr).unwrap()
+            },
             term: None,
         };
         Runtime {

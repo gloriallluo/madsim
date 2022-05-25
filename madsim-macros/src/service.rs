@@ -28,6 +28,7 @@ fn take_rpc_attributes(input: &mut ItemImpl) -> Result<Vec<RpcFn>> {
     struct RpcArgs {
         read: bool,
         write: bool,
+        tasks: u8,
     }
 
     let mut fns = vec![];
@@ -51,6 +52,7 @@ fn take_rpc_attributes(input: &mut ItemImpl) -> Result<Vec<RpcFn>> {
             }
             rpc_fn.read = args.read;
             rpc_fn.write = args.write;
+            rpc_fn.tasks = args.tasks.max(rpc_fn.tasks);
         }
         fns.push(rpc_fn);
     }
@@ -59,39 +61,47 @@ fn take_rpc_attributes(input: &mut ItemImpl) -> Result<Vec<RpcFn>> {
 
 /// Generate `add_rpc_handler` function.
 fn gen_add_rpc_handler(input: &mut ItemImpl, calls: &[RpcFn]) {
-    let bodys = calls.iter().map(|f| {
-        let name = &f.name;
-        let await_suffix = if f.is_async { quote!(.await) } else { quote!() };
-        let rpc_type = &f.rpc_type;
-        if f.write {
-            quote! {
-                let this = self.clone();
-                net.add_rpc_handler_with_data(move |req: #rpc_type, data| {
-                    let this = this.clone();
-                    async move {
-                        let ret = this.#name(req, &data)#await_suffix;
-                        (ret, vec![])
+    let bodys = calls
+        .iter()
+        .map(|f| {
+            let name = &f.name;
+            let await_suffix = if f.is_async { quote!(.await) } else { quote!() };
+            let rpc_type = &f.rpc_type;
+            let tasks = f.tasks;
+            let mut rpcs = vec![];
+            for _ in 0..tasks {
+                rpcs.push(if f.write {
+                    quote! {
+                        let this = self.clone();
+                        net.add_rpc_handler_with_data(move |req: #rpc_type, data| {
+                            let this = this.clone();
+                            async move {
+                                let ret = this.#name(req, &data)#await_suffix;
+                                (ret, vec![])
+                            }
+                        });
+                    }
+                } else if f.read {
+                    quote! {
+                        let this = self.clone();
+                        net.add_rpc_handler_with_data(move |req: #rpc_type, _| {
+                            let this = this.clone();
+                            async move { this.#name(req)#await_suffix }
+                        });
+                    }
+                } else {
+                    quote! {
+                        let this = self.clone();
+                        net.add_rpc_handler(move |req: #rpc_type| {
+                            let this = this.clone();
+                            async move { this.#name(req)#await_suffix }
+                        });
                     }
                 });
             }
-        } else if f.read {
-            quote! {
-                let this = self.clone();
-                net.add_rpc_handler_with_data(move |req: #rpc_type, _| {
-                    let this = this.clone();
-                    async move { this.#name(req)#await_suffix }
-                });
-            }
-        } else {
-            quote! {
-                let this = self.clone();
-                net.add_rpc_handler(move |req: #rpc_type| {
-                    let this = this.clone();
-                    async move { this.#name(req)#await_suffix }
-                });
-            }
-        }
-    });
+            rpcs
+        })
+        .flatten();
     let add_rpc_handler = quote! {
         fn add_rpc_handler(&self) {
             let net = madsim::net::NetLocalHandle::current();
@@ -121,6 +131,7 @@ struct RpcFn {
     rpc_type: Type,
     read: bool,
     write: bool,
+    tasks: u8,
 }
 
 impl TryFrom<&Signature> for RpcFn {
@@ -139,6 +150,7 @@ impl TryFrom<&Signature> for RpcFn {
             },
             read: false,
             write: false,
+            tasks: 1,
         })
     }
 }

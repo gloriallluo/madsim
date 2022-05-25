@@ -267,7 +267,7 @@ impl NetLocalHandle {
 
     /// Receives a raw message.
     pub(crate) async fn recv_from_raw(&self, tag: u64) -> io::Result<(Bytes, SocketAddr)> {
-        let buf = vec![MaybeUninit::<u8>::uninit(); 0x1000];
+        let buf = vec![MaybeUninit::<u8>::uninit(); 0x10000];
         let mut buf: Vec<u8> = unsafe { std::mem::transmute(buf) };
         let (len, from) = self.recv_from(tag, &mut buf).await?;
         Ok((Bytes::from(buf).split_to(len), from))
